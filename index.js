@@ -8,6 +8,7 @@ const bodyParser = require('body-parser');
 const express = require('express');
 const queryString = require('query-string');
 const fs = require('fs');
+const sendEmailVerification = require('./email-verification');
 
 
 const app = express();
@@ -52,8 +53,9 @@ app.post('/user', async (req, res) => {
         }
     };
     try {
-        const user = await client.createUser(newUser);
+        const user = await client.createUser(newUser, {activate: false});
         res.send(user);
+        sendEmailVerification(user.id, client);
     } catch (e) {
         console.log(e);
         res.send(e);
