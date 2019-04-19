@@ -8,28 +8,35 @@ const bodyParser = require('body-parser');
 const express = require('express');
 const queryString = require('query-string');
 const fs = require('fs');
+const { ExpressOIDC } = require('@okta/oidc-middleware');
 const sendEmailVerification = require('./email-verification');
+require('dotenv').config();
+const tokenMiddleware = require('./token-middleware');
 
 
 const app = express();
 app.use(bodyParser.json());
 
 const client = new okta.Client({
-    orgUrl: 'https://dev-712076.okta.com/',
-    token: '00lIPSWnr4r27Tks5jJlnp_2RuP60V6s6zUUd1nx1w'
+    orgUrl: process.env.ORG_URL,
+    token: process.env.API_TOKEN
 });
 
 const authConfig = {
-    url: 'https://dev-712076.okta.com/',
-    issuer: 'https://dev-712076.okta.com/oauth2/default',
-    clientId: '0oahhk8o2NEZR7YfW356',
-    redirectUri: 'http://localhost:8080/authorization-code/callback',
-    tokenManager: {
-      storage: 'sessionStorage'
-    }
+    url: process.env.ORG_URL,
+    issuer: process.env.ISSUER,
+    clientId: process.env.CLIENT_ID,
 };
 
 const authClient = new oktaAuth(authConfig);
+
+const oidc = new ExpressOIDC({
+    issuer: process.env.ISSUER,
+    client_id: process.env.CLIENT_ID,
+    client_secret: process.env.CLIENT_SECRET,
+    appBaseUrl: 'http://localhost:3009',
+    scope: 'openid profile'
+  });
 
 app.get('/', (req, res) => {
     fs.readFile(__dirname + '/public/index.html', 'utf8', (err, text) => {
@@ -62,7 +69,7 @@ app.post('/user', async (req, res) => {
     }
 });
 
-// retriever the user
+// retrieve the user
 app.get('/user/:id', async (req, res) => {
     const user = await client.getUser(req.params.id);
     res.send(user);
@@ -89,22 +96,23 @@ app.post('/login', async (req, res) => {
 
     const sessionToken = result.sessionToken;
     const state = uuid4();
+    const nonce = uuid4();
 
     const query = {
-        client_id: '0oahhk8o2NEZR7YfW356',
+        client_id: process.env.CLIENT_ID,
         response_type:'id_token token',
         response_mode: 'fragment',
         scope: 'openid profile',
         redirect_uri: 'http://localhost:3009/dummy',
         state,
-        nonce: '123456',
+        nonce,
         prompt: 'none',
         sessionToken,
     };
 
     const str = queryString.stringify(query);
 
-    request(`https://dev-712076.okta.com/oauth2/v1/authorize?${str}`, function (error, response) {
+    request(`${process.env.AUTH_URL}?${str}`, function (error, response) {
 
         if (error) {
             res.status(500).send(error);
@@ -127,10 +135,18 @@ app.post('/google', async (req, res) => {
     // response_mode={responseMode}&
     // scope={scopes}&
     // redirect_uri={redirectUri}&
-    // state={state}&nonce={nonce}
+    // state={state}&
+    // nonce={nonce}
 });
 
+app.post('/reset-password', tokenMiddleware, async (req, res) => {
+   const userId = req.tokenClaims.uid;
+   const result = await client.resetPassword(userId);
+   res.send(result); 
+});
 
-app.listen(3009, () => {
-    console.log('Running on port 3009');
+oidc.on('ready', () => {
+    app.listen(3009, () => {
+        console.log('Running on port 3009');
+    });
 });
