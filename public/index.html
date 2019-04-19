@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <meta name="google-signin-client_id" content="904125939739-50dfhrcl2j3k8gd02m9lj03htd6chtcm.apps.googleusercontent.com">
+    <title>okta test</title>
+</head>
+<body>
+    <div>
+        <label for="name">Username</label>
+        <input type="text" name="name" id="name">
+    </div>
+
+    <div>
+        <label for="lastName">LastName</label>
+        <input type="text" name="lastName" id="lastName">
+    </div>    
+
+    <hr>
+
+    <div>
+        <label for="username">Email</label>
+        <input type="text" name="username" id="username">
+    </div>
+    <div>
+        <label for="password">Password</label>
+        <input type="password" name="password" id="password">
+    </div>
+
+    <hr>
+
+    <div>
+        <button onclick="signIn();">SignIn</button>
+        <button onclick="signUp();">SignUp</button>
+        <br><br>
+        <div class="g-signin2" data-onsuccess="onSignIn"></div>
+        <br><br>
+        <a href="#" onclick="signOut();">Sign out</a>
+    </div>
+
+    <div id="tokens">
+    </div>
+    <br><br>
+    <div id="gprofile">
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.18.0/axios.min.js" async defer></script>
+    <script src="https://apis.google.com/js/platform.js" async defer></script>
+    <script>
+        function onSignIn(googleUser) {
+            var profile = googleUser.getBasicProfile();
+
+            var strProfile = 
+                'ID: '+profile.getId()+
+                '\n Name: '+profile.getName()+
+                '\n PhotoUrl: '+profile.getImageUrl()+
+                '\n Email: '+profile.getEmail();
+            
+            document.getElementById('gprofile').innerText = strProfile;
+            document.getElementById('tokens').innerText = googleUser.getAuthResponse().id_token;
+        }
+    </script>
+
+    <script>
+        function signIn() {
+            axios.post('http://localhost:3009/login', {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value
+            }).then(resp => {
+                document.getElementById('tokens').innerText = JSON.stringify(resp.data);
+            }).catch(console.log)
+        }
+
+        function signUp() {
+            axios.post('http://localhost:3009/user', {
+                name: document.getElementById('name').value,
+                lastName: document.getElementById('lastName').value,
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value
+            }).then(resp => {
+                document.getElementById('tokens').innerText = JSON.stringify(resp.data);
+            }).catch(console.log)
+        }
+    </script>
+
+    <script>
+       function signOut() {
+          var auth2 = gapi.auth2.getAuthInstance();
+          auth2.signOut().then(function () {
+            console.log('User signed out.');
+          });
+
+          document.getElementById('tokens').innerText = '';
+          document.getElementById('gprofile').innerText = '';
+       }
+    </script>    
+
+</body>
+</html>
