@@ -13,6 +13,8 @@ const sendEmailVerification = require('./email-verification');
 require('dotenv').config();
 const tokenMiddleware = require('./token-middleware');
 
+const FactorFactory = require('@okta/okta-sdk-nodejs/src/factories/FactorFactory');
+
 
 const app = express();
 app.use(bodyParser.json());
@@ -142,7 +144,59 @@ app.post('/google', async (req, res) => {
 app.post('/reset-password', tokenMiddleware, async (req, res) => {
    const userId = req.tokenClaims.uid;
    const result = await client.resetPassword(userId);
-   res.send(result); 
+   res.send(result);
+});
+
+app.post('/add-mfa', tokenMiddleware, async (req, res) => {
+    try {
+        const userId = req.tokenClaims.uid;
+        const factor = {
+            factorType: 'token:software:totp',
+            provider: 'Google'
+          };        
+        const result = await client.addFactor(userId, factor)
+        res.send(result);
+    } catch (e) {
+        res.status(500).send(e);
+    }
+});
+
+app.post('/enable-mfa', tokenMiddleware, async (req, res) => {
+    try {
+        const userId = req.tokenClaims.uid;
+        const passCode = req.body.passCode;
+        const verification = {
+            passCode
+          };        
+        const result = await client.activateFactor(userId, 'ufths2w2jbu7ZVU6E356', verification);
+        res.send(result);
+    } catch (e) {
+        res.status(500).send(e);
+    }
+});
+
+app.post('/verify-mfa', tokenMiddleware, async (req, res) => {
+    try {
+        const userId = req.tokenClaims.uid;
+        const passCode = req.body.passCode;
+        const verification = {
+            passCode
+          };        
+        const result = await client.verify(userId, 'ufths2w2jbu7ZVU6E356', verification);
+        res.send(result);
+    } catch (e) {
+        res.status(500).send(e);
+    }
+});
+
+app.post('/list-mfa', tokenMiddleware, async (req, res) => {
+    try {
+        const userId = req.tokenClaims.uid;
+        const result = await client.listFactors(userId);
+        res.send(result);
+    } catch (e) {
+        res.status(500).send(e);
+    }
 });
 
 oidc.on('ready', () => {
