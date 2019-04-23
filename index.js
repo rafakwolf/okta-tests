@@ -1,19 +1,17 @@
+require('dotenv').config();
+
 const okta = require('@okta/okta-sdk-nodejs');
-const jwt = require('@okta/jwt-verifier');
 const oktaAuth = require('@okta/okta-auth-js');
+const {hashToObject} = require('@okta/okta-auth-js/lib/oauthUtil');
 const request = require('request');
-const btoa = require('btoa');
 const uuid4 = require('uuid4');
 const bodyParser = require('body-parser');
 const express = require('express');
 const queryString = require('query-string');
 const fs = require('fs');
-const { ExpressOIDC } = require('@okta/oidc-middleware');
 const sendEmailVerification = require('./email-verification');
-require('dotenv').config();
 const tokenMiddleware = require('./token-middleware');
-
-const FactorFactory = require('@okta/okta-sdk-nodejs/src/factories/FactorFactory');
+const axios = require('axios').default;
 
 
 const app = express();
@@ -32,15 +30,7 @@ const authConfig = {
 
 const authClient = new oktaAuth(authConfig);
 
-const oidc = new ExpressOIDC({
-    issuer: process.env.ISSUER,
-    client_id: process.env.CLIENT_ID,
-    client_secret: process.env.CLIENT_SECRET,
-    appBaseUrl: 'http://localhost:3009',
-    scope: 'openid profile'
-  });
-
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
     fs.readFile(__dirname + '/public/index.html', 'utf8', (err, text) => {
         res.send(text);
     });
@@ -88,15 +78,8 @@ app.get('/dummy', async (req, res) => {
     res.send('success');
 });
 
-// login
-app.post('/login', async (req, res) => {
 
-    const result = await authClient.signIn({
-        username: req.body.username,
-        password: req.body.password
-    });
-
-    const sessionToken = result.sessionToken;
+async function requestAccessTokens(sessionToken) {
     const state = uuid4();
     const nonce = uuid4();
 
@@ -114,42 +97,98 @@ app.post('/login', async (req, res) => {
 
     const str = queryString.stringify(query);
 
-    request(`${process.env.AUTH_URL}?${str}`, function (error, response) {
+    const response = await axios.get(`${process.env.AUTH_URL}?${str}`);
+    const hash = response.request.res.responseUrl.replace('http://localhost:3009/dummy','');
+    const tokens = hashToObject(hash);
+    return tokens;
+}
 
-        if (error) {
-            res.status(500).send(error);
-        }
 
-        const parts = response.request.uri.hash.split('&');
-        let tokens = {};
-        parts.forEach(item => {
-            tokens[item.split('=')[0]] = item.split('=')[1];
-        });
-        res.send(tokens);
+// login
+app.post('/login', async (req, res) => {
+
+    const result = await authClient.signIn({
+        username: req.body.username,
+        password: req.body.password
     });
+
+    switch (result.status) {
+        case 'SUCCESS':
+            const tokens = await requestAccessTokens(result.sessionToken);
+            res.send(tokens);
+            break;
+        case 'MFA_REQUIRED':
+            if (result.factors.length > 0) {
+                const factor = result.factors[0];
+                res.send({
+                    stateToken: result.data.stateToken,
+                    status: result.status,
+                    factorId: factor.id,
+                    factorType: factor.factorType,
+                });
+            }
+            break;
+         default:
+            break;
+    }
 });
 
-app.post('/google', async (req, res) => {
-    // https://dev-712076.okta.com/oauth2/v1/authorize?
-    // idp=0oahls96dPCUpExcL356&
-    // client_id={clientId}&
-    // response_type={responseType}&
-    // response_mode={responseMode}&
-    // scope={scopes}&
-    // redirect_uri={redirectUri}&
-    // state={state}&
-    // nonce={nonce}
+app.post('/verify-mfa', tokenMiddleware, async (req, res) => {
+    const {mfaCode, factorId, stateToken} = req.body;
+
+    const requestUrl = `https://dev-712076.okta.com/api/v1/authn/factors/${factorId}/verify`;
+
+    request.post(requestUrl, {
+        json: {
+            "stateToken": stateToken,
+            "passCode": mfaCode
+        } 
+    },
+     async (error, response, body) => {
+        if (error) {
+            res.status(500).send(error);
+            return;
+        }
+
+        const {sessionToken, status} = body;
+        if (status === 'SUCCESS') {
+            const tokens = await requestAccessTokens(sessionToken);
+            res.send(tokens);
+        } else {
+            res.status(response.statusCode).send(body);
+        }
+
+      });
+
+});
+
+app.get('/google', async (req, res) => {
+    const state = uuid4();
+    const nonce = uuid4();
+
+    const redirectUrl = 
+        `https://dev-712076.okta.com/oauth2/v1/authorize?
+idp=0oahls96dPCUpExcL356&
+client_id=${process.env.CLIENT_ID}&
+response_type=${'id_token+token'}&
+response_mode=${'fragment'}&
+scope=${'openid+profile'}&
+redirect_uri=${'http://localhost:3009/dummy'}&
+state=${state}&
+nonce=${nonce}`.replace(/\n/gm, '');
+
+    res.redirect(redirectUrl);
 });
 
 app.post('/reset-password', tokenMiddleware, async (req, res) => {
-   const userId = req.tokenClaims.uid;
+   const userId = req.userContext.userinfo.uid;
    const result = await client.resetPassword(userId);
    res.send(result);
 });
 
 app.post('/add-mfa', tokenMiddleware, async (req, res) => {
     try {
-        const userId = req.tokenClaims.uid;
+        const userId = req.userContext.userinfo.uid;
         const factor = {
             factorType: 'token:software:totp',
             provider: 'Google'
@@ -163,7 +202,7 @@ app.post('/add-mfa', tokenMiddleware, async (req, res) => {
 
 app.post('/enable-mfa', tokenMiddleware, async (req, res) => {
     try {
-        const userId = req.tokenClaims.uid;
+        const userId = req.userContext.userinfo.uid;
         const passCode = req.body.passCode;
         const verification = {
             passCode
@@ -175,23 +214,9 @@ app.post('/enable-mfa', tokenMiddleware, async (req, res) => {
     }
 });
 
-app.post('/verify-mfa', tokenMiddleware, async (req, res) => {
-    try {
-        const userId = req.tokenClaims.uid;
-        const passCode = req.body.passCode;
-        const verification = {
-            passCode
-          };        
-        const result = await client.verify(userId, 'ufths2w2jbu7ZVU6E356', verification);
-        res.send(result);
-    } catch (e) {
-        res.status(500).send(e);
-    }
-});
-
 app.post('/list-mfa', tokenMiddleware, async (req, res) => {
     try {
-        const userId = req.tokenClaims.uid;
+        const userId = req.userContext.userinfo.uid;
         const result = await client.listFactors(userId);
         res.send(result);
     } catch (e) {

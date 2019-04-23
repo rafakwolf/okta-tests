@@ -15,7 +15,6 @@
     "express": "^4.16.4",
     "express-list-endpoints": "^4.0.0",
     "query-string": "^6.4.2",
-    "request-promise": "^4.2.4",
     "uuid4": "^1.1.4"
   }
 }
