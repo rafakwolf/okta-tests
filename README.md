@@ -4,5 +4,5 @@
 - [x] - User email confirmation
 - [x] - Token Validation Middleware
 - [x] - Social Logins
-- [ ] - MFA
+- [x] - MFA
 - [ ] - ADFS/LDAP
