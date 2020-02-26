@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const okta = require('@okta/okta-sdk-nodejs');
 const oktaAuth = require('@okta/okta-auth-js');
-const {hashToObject} = require('@okta/okta-auth-js/lib/oauthUtil');
+const {urlParamsToObject} = require('@okta/okta-auth-js/lib/oauthUtil');
 const request = require('request');
 const uuid4 = require('uuid4');
 const bodyParser = require('body-parser');
@@ -12,6 +12,9 @@ const fs = require('fs');
 const sendEmailVerification = require('./email-verification');
 const tokenMiddleware = require('./token-middleware');
 const axios = require('axios').default;
+const fetch = require('node-fetch');
+
+const jwt = require('jsonwebtoken');
 
 
 const app = express();
@@ -30,7 +33,7 @@ const authConfig = {
 
 const authClient = new oktaAuth(authConfig);
 
-app.get('/', (_req, res) => {
+app.get('/', (_req, res) => { 
     fs.readFile(__dirname + '/public/index.html', 'utf8', (err, text) => {
         res.send(text);
     });
@@ -80,14 +83,16 @@ app.get('/dummy', async (req, res) => {
 
 
 async function requestAccessTokens(sessionToken) {
+    console.time('requestAccessTokens');
+
     const state = uuid4();
     const nonce = uuid4();
 
     const query = {
         client_id: process.env.CLIENT_ID,
-        response_type:'id_token token',
+        response_type:'id_token token code',
         response_mode: 'fragment',
-        scope: 'openid profile',
+        scope: 'openid profile offline_access',
         redirect_uri: 'http://localhost:3009/dummy',
         state,
         nonce,
@@ -95,17 +100,46 @@ async function requestAccessTokens(sessionToken) {
         sessionToken,
     };
 
+    let hash = '';
+
     const str = queryString.stringify(query);
 
+    // try {
+    //     const response = await fetch(
+    //         `${process.env.AUTH_URL}?${str}`,
+    //       {
+    //         method: 'get',
+    //         headers: {
+    //           'Accept': 'application/json',
+    //           'Content-Type': 'application/json;charset=UTF-8'
+    //         },
+    //       });
+      
+    //       hash = response.url.replace('http://localhost:3009/dummy','');
+
+    //       console.log(response);
+
+    // } catch (error) {
+    //     console.log('ERROR:', JSON.stringify(error, undefined, 2));
+    // }    
+
     const response = await axios.get(`${process.env.AUTH_URL}?${str}`);
-    const hash = response.request.res.responseUrl.replace('http://localhost:3009/dummy','');
-    const tokens = hashToObject(hash);
+
+    console.log('status',response.status);
+    console.log('data', response.data);
+
+    hash = response.request.res.responseUrl.replace('http://localhost:3009/dummy','');
+
+    const tokens = urlParamsToObject(hash);
+    console.timeEnd('requestAccessTokens');
     return tokens;
 }
 
 
 // login
 app.post('/login', async (req, res) => {
+
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
     const result = await authClient.signIn({
         username: req.body.username,
@@ -132,6 +166,14 @@ app.post('/login', async (req, res) => {
             break;
     }
 });
+
+// // login 2
+// app.post('/login2', async (req, res) => {
+//     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+//         jwt.sign()
+
+// }
 
 app.post('/verify-mfa', tokenMiddleware, async (req, res) => {
     const {mfaCode, factorId, stateToken} = req.body;
@@ -181,14 +223,14 @@ nonce=${nonce}`.replace(/\n/gm, '');
 });
 
 app.post('/reset-password', tokenMiddleware, async (req, res) => {
-   const userId = req.userContext.userinfo.uid;
+   const userId = req.tokenClaims.uid;
    const result = await client.resetPassword(userId);
    res.send(result);
 });
 
 app.post('/add-mfa', tokenMiddleware, async (req, res) => {
     try {
-        const userId = req.userContext.userinfo.uid;
+        const userId = req.tokenClaims.uid;
         const factor = {
             factorType: 'token:software:totp',
             provider: 'Google'
@@ -202,7 +244,7 @@ app.post('/add-mfa', tokenMiddleware, async (req, res) => {
 
 app.post('/enable-mfa', tokenMiddleware, async (req, res) => {
     try {
-        const userId = req.userContext.userinfo.uid;
+        const userId = req.tokenClaims.uid;
         const passCode = req.body.passCode;
         const verification = {
             passCode
@@ -216,7 +258,7 @@ app.post('/enable-mfa', tokenMiddleware, async (req, res) => {
 
 app.post('/list-mfa', tokenMiddleware, async (req, res) => {
     try {
-        const userId = req.userContext.userinfo.uid;
+        const userId = req.tokenClaims.uid;
         const result = await client.listFactors(userId);
         res.send(result);
     } catch (e) {
@@ -224,8 +266,6 @@ app.post('/list-mfa', tokenMiddleware, async (req, res) => {
     }
 });
 
-oidc.on('ready', () => {
-    app.listen(3009, () => {
-        console.log('Running on port 3009');
-    });
+app.listen(3009, () => {
+    console.log('Running on port 3009');
 });
